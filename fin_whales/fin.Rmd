@@ -1,0 +1,291 @@
+---
+title: Analysis of aerial and shipboard surveys of fin whale data with corrections for $g(0)$ and availability
+author: David L Miller, David A Fifield, Ewan Wakefield and Douglas B Sigourney
+output: pdf_document
+
+---
+
+```{r setup-knitr, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(cache=TRUE)
+```
+
+
+# Introduction
+
+These data consist of observations of fin whales as part of NOAA's [Atlantic Marine Assessment Program for Protected Species](https://www.fisheries.noaa.gov/new-england-mid-atlantic/population-assessments/atlantic-marine-assessment-program-protected).
+
+The analysis here is based on that in *Developing and assessing a density surface model in a Bayesian hierarchical framework with a focus on uncertainty: insights from simulations and an application to fin whales (Balaenoptera physalus)* [available at PeerJ](https://peerj.com/articles/8226/).
+
+# Elements of this analysis
+
+- 2 detection functions
+  - Aerial survey: multiple covariate distance sampling (MCDS) with fixed $g(0)$ correction from literature
+  - Shipboard survey: double observer survey (mark-recapture distance sampling; MRDS)
+- Density surface model combining these two sources
+- Observations of fin, sei and fin/sei uncertain species identifications were used to fit the detection function, but only certain fin detections were then used in the density surface model.
+- Availability correction for aerial surveys (0.374, CV=0.34)
+- Comparison of using average group size versus observed group size
+
+The analysis of these data in Sigourney et al., uses a fully Bayesian model, incorporating uncertainty in group size and availability. Here we do not address these sources of uncertainty. The most appropriate comparison is to results provided in their [Table 3](https://peerj.com/articles/8226/#table-3) where availability was treated as constant (since uncertainty in mean group size contributed a negligible amount to uncertainty). This estimate is 4345 fin whales with a CV=0.21 (further comparisons are provided at the end of this document).
+
+
+# Preliminaries
+
+Data has already been processed and is stored in `findata.RData`.
+
+```{r data-and-packages}
+# modelling
+library(patchwork)
+library(mrds)
+library(dsm)
+# for plotting predictions
+library(ggplot2)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(sf)
+# data, pre-processed
+load("findata.RData")
+```
+
+Note that `dsm` package version 2.3.1 is required for multiple detection function functionality and `mgcv` version 1.8-34 is required for Metropolis-Hastings sampling.
+
+## Model fitting
+
+We now fit the detection functions, followed by the density surface model. Note that we'd normally do full model selection at each stage, but since we are simply duplicating the analysis from the paper we just use the models selected there.
+
+Data used to fit the detection functions (`ship_detections` and `plane_detections`) includes detections of fin whales, sei whales and detections that could only be classified to "fin or sei whale". This improves the fit of the detection functions as more detections are included. For fitting the density surface model, we only want to include detections of fin whales (since that is the species we want an abundance estimate for). We can exclude the non-fin whale observations by including only the `object` IDs that we want in the observation `data.frame` `fin_obs`. See the data setup script for how this was done.
+
+We first setup the truncations for each detection function model:
+
+```{r truncation}
+w_ship <- 6
+w_plane <- 0.9
+```
+
+and then need to set up a vector of availabilities (taken from supplementary code from the paper) for the DSM. This just needs to be the same length as the segment data (if we have a count model). We have a slight misuse of arguments here as we include the $g(0)$ estimate for the plane (as computed from a different analysis) here as fixed to match what's in the paper. The estimate of $g(0)=0.67$ (CV = 0.16) is from Palka et al. (2017).
+
+```{r availability}
+a_plane <- 0.374*0.67
+a_ship <- 1
+
+avail <- c(a_ship, a_plane)[fin_segs$ddfobj]
+```
+
+
+
+### Ship surveys - MRDS
+
+We can fit an independent observer model to the double observer data for the ship.
+
+```{r ship-mrds}
+Ship_mrds <- ddf(dsmodel = ~mcds(key = "hr", formula = ~beaufort + SUBJ_WAVG),
+                 mrmodel = ~glm(~distance),
+                 data = ship_detections, method = "io",
+                 meta.data = list(width = w_ship))
+summary(Ship_mrds)
+```
+
+
+### Aerial surveys - MCDS
+
+The aerial survey is a regular multiple covariate detection function:
+
+```{r plane-mcds}
+Plane_ds <- ddf(dsmodel = ~mcds(key = "hr", formula = ~beaufort),
+                data = plane_detections, meta.data = list(width = w_plane))
+summary(Plane_ds)
+```
+
+
+### Density surface model
+
+We can then fit the spatial model using the below code. Note a list of detection function objects is provided to `ddf.obj`, their ordering matters and corresponds to the `ddfobj` column in the segment data (`fin_segs`). The availability correction is supplied via the `availability=` argument.
+
+```{r dsm-obs-group}
+fin_b <- dsm(count ~ s(DIST125, bs="ts", k=5) +
+                     s(DEPTH, bs="ts", k=5) +
+                     s(DIST2SHORE, bs="ts", k=5) +
+                     s(SST, bs="ts", k=5),
+             ddf.obj=list(Ship_mrds, Plane_ds),
+             family=tw(),
+             availability=avail,
+             segment.data=fin_segs,
+             observation.data=fin_obs)
+summary(fin_b)
+```
+
+We can review the summary output above and verify that we have given the smooth terms sufficient degrees of freedom.
+
+We can then propagate the variance from the detection functions through to predictions over the study area from the DSM:
+
+```{r dsm-obs-group-var}
+vp <- dsm_varprop(fin_b, predgrid)
+vp
+```
+
+The `vp$refit` object is now the model we will use for predictions and further checking as this has the refitted model following the methods of Bravington et al. (2021).
+
+We can also look at a quantile-quantile plot to verify the response distribution is reasonable (grey reference bands allow us to assess the degree of departure from their ideal values):
+
+```{r qq, fig.width=5, fig.height=5}
+qq.gam(vp$refit, rep=200, asp=1)
+```
+
+We can compare observed and expected number of groups by Beaufort chunk:
+
+```{r dsm-obs-group-checking}
+obs_exp(vp$refit, "beaufort", 0:5)
+```
+
+We can use the `predict` function to get the estimate of abundance (using the model with the variance propagated using the correct component of `dsm_varprop`):
+
+```{r dsm-avg-group-predict}
+# add extra columns to predgrid to make predict work
+predgrid$XX <- matrix(0, nrow(predgrid), ncol(vp$refit$data$XX))
+predN <- predict(vp$refit, newdata=predgrid, off.set=predgrid$off.set)
+```
+
+
+We can now fit same model but using observed rather than estimated group sizes
+
+
+The only difference between this model and `dsm_avg_group` is now we don't set `group=TRUE`. We can see that we get pretty similar results:
+
+
+But we now don't need to multiply by the average group size:
+
+
+
+Rather than use the analytic approach, it might be preferable to use a Metropolis-Hastings sampler to get a posterior sample for the model. We need to use tools from [this github repo](https://github.com/dill/GAMsampling) to ensure that the sampling works for the variance-propagated DSM.
+
+```{r mh-sampler}
+# load additional code
+source("likelihood_tools.R")
+source("gam.mh_fix.R")
+source("ttools.R")
+# do the sampling
+bs <- gam.mh(vp$refit, burn=2000, thin=10)
+```
+
+Now we need to construct a prediction matrix:
+
+```{r predmat}
+# create the matrix that maps model coefficients to the linear predictor
+Xp <- predict(vp$refit, predgrid, type="lpmatrix")
+# generate predictions
+preds_mh <- predgrid$off.set * exp(Xp %*% t(bs$bs))
+```
+
+Now calculate our posterior statistics per grid cell:
+
+```{r post-stats}
+# mean density estimate per cell from simulation
+# results as density in animals/km^2
+predgrid$Density <- rowMeans(preds_mh/10^2)
+# per cell CV
+predgrid$CV <- apply(preds_mh/10^2, 1, sd)/predgrid$Density
+```
+
+Finally, plotting these:
+
+```{r plotit, fig.width=12, fig.height=6}
+# plot theme
+this_theme <- theme(legend.position="bottom",
+                    axis.title.y=element_blank(),
+                    axis.text.y=element_blank(),
+                    axis.title.x=element_blank(),
+                    axis.text.x=element_blank(),
+                    legend.text=element_text(size=8))
+
+
+# get scale for predictions as in paper, thanks to Beth Josephson for this code
+mind <- 0.000017
+maxd <- 0.048
+# geometrical breaks
+n <- 10
+k <- (maxd/mind)^(1/n)
+brks <- c(0, mind, (mind*(k^seq(n))), max(predgrid$Density))
+predgrid$pred_d <- cut(predgrid$Density, brks)
+# nicer break labels (fiddly!)
+levels(predgrid$pred_d) <- sub(",", " - ", levels(predgrid$pred_d))
+levels(predgrid$pred_d) <- sub("\\(", "", levels(predgrid$pred_d))
+levels(predgrid$pred_d) <- sub("]", "", levels(predgrid$pred_d))
+levels(predgrid$pred_d)[1] <- "<0.000017"
+levels(predgrid$pred_d)[length(levels(predgrid$pred_d))] <- ">0.048"
+levels(predgrid$pred_d) <- unlist(lapply(levels(predgrid$pred_d), function(x){
+  if(grepl("e", x)){
+    x <- as.character(as.numeric(strsplit(x, " - ")[[1]]))
+    x <- paste0(x[1], " - ", x[2])
+  }
+  x
+}))
+
+# and the breaks for the CV (as in paper)
+cvbrks <- c(0, 0.35, .5, 1, ceiling(max(predgrid$CV)))
+predgrid$CV_d <- cut(predgrid$CV, cvbrks)
+# nicer break labels
+levels(predgrid$CV_d) <- sub(",", " - ", levels(predgrid$CV_d))
+levels(predgrid$CV_d) <- sub("\\(", "", levels(predgrid$CV_d))
+levels(predgrid$CV_d) <- sub("]", "", levels(predgrid$CV_d))
+levels(predgrid$CV_d)[4] <- ">1"
+
+# land outline
+na <- ne_countries(continent="North America", returnclass="sf", scale=50)
+na <- st_transform(na, "+proj=omerc +lat_0=35 +lonc=-75 +alpha=40 +k=0.9996 +x_0=0 +y_0=0 +gamma=40 +datum=NAD83 +units=m +no_defs +ellps=GRS80 +towgs84=0,0,0") 
+
+predplot <- ggplot(predgrid) +
+  geom_tile(aes(x=x, y=y, fill=pred_d, colour=pred_d, width=10000, height=10000)) +
+  geom_sf(data=na, colour="grey80", fill="grey80")+
+  theme_minimal() +
+  scale_fill_viridis_d() +
+  scale_colour_viridis_d(guide=FALSE) +
+  labs(fill="Density") +
+  this_theme +
+  coord_sf(xlim=range(predgrid$x), ylim=range(predgrid$y), expand=FALSE)
+
+CVplot <- ggplot(predgrid) +
+  geom_tile(aes(x=x, y=y, fill=CV_d, colour=CV_d, width=10000, height=10000)) +
+  geom_sf(data=na, colour="grey80", fill="grey80")+
+  theme_minimal() +
+  scale_fill_viridis_d() +
+  scale_colour_viridis_d(guide=FALSE) +
+  labs(fill="CV") +
+  this_theme +
+  coord_sf(xlim=range(predgrid$x), ylim=range(predgrid$y), expand=FALSE)
+
+# print the plots side-by-side
+predplot + CVplot
+```
+
+We can also calculate an overall summary for comparison with results in the paper:
+
+```{r nhat-comp}
+# abundance estimate
+sum(vp$pred)
+# standard error
+sqrt(var(colSums(preds_mh)))
+# coefficient of variation for DSM
+dsm_cv <- sqrt(var(colSums(preds_mh)))/(sum(vp$pred))
+dsm_cv
+```
+
+We may also want to plot a histogram of the posterior distribution of abundance:
+
+```{r posterior-Nhat}
+hist(colSums(preds_mh), xlab="Abundance", main="Posterior sample of abundance")
+```
+
+Adding availability (0.34) and $g(0)$ CV (0.16) for the aerial survey to get a "total" CV:
+
+```{r add-palka-cv}
+sqrt(dsm_cv^2 + 0.34^2 + 0.16^2)
+```
+
+Although we cannot make an exact comparison from Sigourney et al. (2020), the authors make estimates fixing the group size to observed values ($\hat{N}$=4013; CV=0.31) and fixing the availability to its mean as we do here ($\hat{N}$=4345; CV=0.21) while leaving the rest of the model as-is. Here we assume that availability and $g(0)$ are independent and sum squared CVs to get the total CV which is higher than that from the original paper.
+
+
+# References
+
+- Palka DL, Chavez-Rosales S, Josephson E, Cholewiak D, Haas HL, Garrison L, Jones M, Sigourney D, Waring G, Jech M, Broughton E, Soldevilla M, Davis G, DeAngelis A, Sasso CR, Winton MV, Smolowitz RJ, Fay G, LaBrecque E, Leiness JB, Dettloff Warden M, Murray K, Orphanides C. 2017. Atlantic marine assessment program for protected species: 2010-2014, OCS Study BOEM 2017-071. Washington: US Dept. of the Interior, Bureau of Ocean Energy Management, Atlantic OCS Region. 211 
+- Sigourney DB, Chavez-Rosales S, Conn PB, Garrison L, Josephson E, Palka D. 2020. Developing and assessing a density surface model in a Bayesian hierarchical framework with a focus on uncertainty: insights from simulations and an application to fin whales (Balaenoptera physalus) PeerJ 8:e8226 https://doi.org/10.7717/peerj.8226 
