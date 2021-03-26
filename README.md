@@ -7,7 +7,7 @@ This repository contains the data and code to run the two examples from the pape
 
 Re-analysis of the data presented in [Sigourney et al (2020)](https://peerj.com/articles/8226/):
 
-     Sigourney DB, Chavez-Rosales S, Conn PB, Garrison L, Josephson E, Palka D. 2020. Developing and assessing a density surface model in a Bayesian hierarchical framework with a focus on uncertainty: insights from simulations and an application to fin whales (Balaenoptera physalus) PeerJ 8:e8226 https://doi.org/10.7717/peerj.8226
+Sigourney DB, Chavez-Rosales S, Conn PB, Garrison L, Josephson E, Palka D. 2020. Developing and assessing a density surface model in a Bayesian hierarchical framework with a focus on uncertainty: insights from simulations and an application to fin whales (Balaenoptera physalus) PeerJ 8:e8226 https://doi.org/10.7717/peerj.8226
 
 The survey that the fin whale data originate from was funded through two inter-agency agreements with the National Marine Fisheries Service: inter-agency agreement number M14PG00005 with the US Department of the Interior, Bureau of Ocean Energy Management, Environmental Studies Program, Washington, DC and inter-agency agreement number NEC-16-011-01-FY18 with the US Navy.
 
