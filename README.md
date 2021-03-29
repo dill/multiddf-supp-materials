@@ -14,6 +14,11 @@ The survey that the fin whale data originate from was funded through two inter-a
 Raw data conversion and wrangling code is available in [this `git` repository](https://github.com/densitymodelling/nefsc_fin_mrds_dsm).
 
 
-## `fulmars`: shipboard survey using the seabirds-at-sea protocol
+## `fulmars`: shipboard survey using the Eastern Canada Seabirds At Sea protocol
+
+Full analysis of these data have been submitted as:
+
+Wakefield, E. D., Miller, D.L., Bond, S.L., Carvalho, P.C., Catry, P., Dilley, B.J., Fifield, D.A., Gjerdrum, C., González-Solís, J., Hogan, H., Laptikhovsky, V., Miller, J.A.O., Miller, P.I., Pinder, S.J., Pipa, T., Thompson, L.A., Thompson, P.M., Matthiopoulos, J. (submitted). "The distribution, habitat associations and abundance of seabirds in the sub-polar frontal zone of the Northwest Atlantic." Progress in Oceanography.
 
 The survey that the fulmar data originate from was funded by the UK Natural Environmental Research Council (NERC) grant NE/M017990/1.
+
