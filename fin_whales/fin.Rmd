@@ -54,7 +54,7 @@ Note that `dsm` package version 2.3.1 is required for multiple detection functio
 
 We now fit the detection functions, followed by the density surface model. Note that we'd normally do full model selection at each stage, but since we are simply duplicating the analysis from the paper we just use the models selected there.
 
-Data used to fit the detection functions (`ship_detections` and `plane_detections`) includes detections of fin whales, sei whales and detections that could only be classified to "fin or sei whale". This improves the fit of the detection functions as more detections are included. For fitting the density surface model, we only want to include detections of fin whales (since that is the species we want an abundance estimate for). We can exclude the non-fin whale observations by including only the `object` IDs that we want in the observation `data.frame` `fin_obs`. See the data setup script for how this was done.
+Data used to fit the detection functions (`ship_detections` and `plane_detections`) includes detections of fin whales, sei whales and detections that could only be classified to "fin or sei whale". This improves the fit of the detection functions as more detections are included. For fitting the density surface model, we only want to include detections of fin whales (since that is the species we want an abundance estimate for). We can exclude the non-fin whale observations by including only the `object` IDs that we want in the observation `data.frame` `fin_obs`. See the data setup script (available at [`https://github.com/densitymodelling/nefsc_fin_mrds_dsm`](https://github.com/densitymodelling/nefsc_fin_mrds_dsm)) for how this was done.
 
 We first setup the truncations for each detection function model:
 
@@ -142,6 +142,9 @@ We can use the `predict` function to get the estimate of abundance (using the mo
 
 ```{r dsm-avg-group-predict}
 # add extra columns to predgrid to make predict work
+# the variance propagation procedure includes a new random effect covariate
+# called "XX", we need this to predict (though we ignore its effect by setting
+# the value to zero)
 predgrid$XX <- matrix(0, nrow(predgrid), ncol(vp$refit$data$XX))
 predN <- predict(vp$refit, newdata=predgrid, off.set=predgrid$off.set)
 ```
@@ -157,7 +160,7 @@ But we now don't need to multiply by the average group size:
 
 
 
-Rather than use the analytic approach, it might be preferable to use a Metropolis-Hastings sampler to get a posterior sample for the model. We need to use tools from [this github repo](https://github.com/dill/GAMsampling) to ensure that the sampling works for the variance-propagated DSM.
+Rather than use the analytic approach, it might be preferable to use a Metropolis-Hastings sampler to get a posterior sample for the model. We need to use tools from [`https://github.com/dill/GAMsampling`](https://github.com/dill/GAMsampling) to ensure that the sampling works for the variance-propagated DSM.
 
 ```{r mh-sampler}
 # load additional code
@@ -182,7 +185,7 @@ Now calculate our posterior statistics per grid cell:
 ```{r post-stats}
 # mean density estimate per cell from simulation
 # results as density in animals/km^2
-predgrid$Density <- rowMeans(preds_mh/10^2)
+predgrid$Density <- rowMeans(preds_mh/predgrid$off.set)
 # per cell CV
 predgrid$CV <- apply(preds_mh/10^2, 1, sd)/predgrid$Density
 ```
