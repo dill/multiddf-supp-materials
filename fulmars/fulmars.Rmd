@@ -32,12 +32,54 @@ ls()
 
 A summary of the loaded objects
 
-- `dists_fly`: distance data for the flying fulmars, used to fit the detection function
-- `dists_swim`: "distance" data for the fulmars on the water, the `distance` column is not used but the data is used to set up a dummy detection function
-- `obs`: the observation data frame that matches the `dists_` data to the sample units (transect segments)
-- `segs`: segment data, giving each sample location that was visited, the effort expended and the observation covariates collected at the segment level.
-- `pred`: prediction grid.
-- `pred_sf`: prediction grid in R `sf` format, for nicer printing (not essential)
+### `dists_swim`
+
+Distance data for the fulmars on the water, used to fit the detection function.
+
+```{r head-dists_swim}
+head(dists_swim)
+```
+
+
+### `dists_fly`
+
+The "distance" data for the flying fulmars, the `distance` column is not used but the data is used to set up a dummy detection function:
+
+```{r head-dists_fly}
+head(dists_fly)
+```
+
+### `obs`
+
+The observation `data.frame` that matches the `dists_` data to the sample units (transect segments) in `segs`.
+
+```{r head-obs}
+head(obs)
+```
+
+### `segs`
+
+The segment data, giving each sample location that was visited, the effort expended and the observation covariates collected at the segment level.
+
+```{r head-segs}
+head(segs)
+```
+
+### `pred`
+
+The prediction grid with covariates as in `segs`:
+
+```{r head-pred}
+head(pred)
+```
+
+### `pred_sf`
+
+The prediction grid in R `sf` format, for nicer printing (not essential).
+
+```{r head-pred_sf}
+head(pred_sf)
+```
 
 
 # Detection function analysis
@@ -71,7 +113,7 @@ Comparing models by AIC, we see the half-normal is preferred (but not by much):
 AIC(df_swim_hn, df_swim_hr)
 ```
 
-(Note we are not able to do a $\chi^2$ goodness-of-fit test as we do not have enough degrees of freedom, as the data are binned.)
+(Note we are not able to do a $\chi^2$ goodness-of-fit test as we do not have enough degrees of freedom, as the data were binned at time of collection.)
 
 We can look at the summary of that model:
 
@@ -94,7 +136,7 @@ summary(df_fly)
 
 # Setup data
 
-Now we need to setup the segment data to use the multi-platform approach. The first part of this consists of duplicating the segment data to have set of segments for flying birds and another for birds on the water. We also need to create a column indicating which detection function will be used for a given segment (`ddfobj`) and ensure that the `Sample.Label` is unique.
+Now we need to setup the segment data to use the multi-platform approach. The first part of this consists of duplicating the segment data to have a set of segments for flying birds and another for birds on the water. We also need to create a column indicating which detection function will be used for a given segment (`ddfobj`) and ensure that the `Sample.Label` is unique.
 
 ```{r segment-setup}
 # first duplicate the segment table
@@ -103,7 +145,7 @@ segs2 <- rbind(segs, segs)
 # create a ddfobj field to keep track of which detection function to use
 segs2$ddfobj <- c(rep(1, nrow(segs)), rep(2, nrow(segs)))
 
-# create a flying vs swimming, which has the same information as ddfobj
+# create a flying vs swimming factor, which has the same information as ddfobj
 # but has a friendlier name for modelling
 segs2$FlySwim <- factor(c(rep("swim", nrow(segs)),
                           rep("fly", nrow(segs))),
@@ -117,13 +159,13 @@ segs2$Sample.Label[segs2$ddfobj == 2] <- paste0(segs2$Sample.Label[segs2$ddfobj 
                                                 "-2")
 ```
 
-We now need to half the effort because only one side of the transect was observed:
+`dsm` assumes that both sides of the transect were observed, this was not the case for this survey, so we now need to half the effort (this is unrelated to duplicating the effort above):
 
 ```{r half-effort}
 segs2$Effort <- segs2$Effort/2
 ```
 
-Our next task is to re-write the observation table to ensure that the `Sample.Label`s match those in the segment tables and include the `ddfobj` column as for the segment data.
+Our next task is to re-write the observation table to ensure that the `Sample.Label`s match those in the segment table and include the `ddfobj` column as for the segment data.
 
 ```{r obs-setup}
 obs$Sample.Label[obs$FlySwim == "W"] <- paste0(obs$Sample.Label[obs$FlySwim == "W"], "-1")
@@ -143,7 +185,7 @@ Now we have the data setup, we can start to fit models.
 We start with the model with no extra terms accounting for platform:
 
 ```{r nofactor-model}
-dsm_nofactor <- dsm(count~s(x, y, k=100),
+dsm_nofactor <- dsm(count~s(x, y, k=100, bs="ts"),
                  ddf.obj=list(df_swim_hn, df_fly),
                  segment.data=segs2, observation.data=obs, family=nb())
 summary(dsm_nofactor)
@@ -201,10 +243,12 @@ So by AIC we prefer the factor-smooth model.
 
 # Prediction
 
-Now we can make predictions for each of these models. This code is a little complex as it involved binding the predictions onto `pred_sf` which is a spatial object with projection information. We create a `data.frame` that includes combined and uncombined results for the factor and factor-smooth models.
+Now we can make predictions for each of these models. This code is a little complex as it involved binding the predictions onto `pred_sf` which is a spatial object with projection information. We create a `data.frame` that includes flying and swimming abundances combined and individually for the factor and factor-smooth models.
 
 ```{r generate-plot-data}
 # create an extra column to account for the variance propagation model
+# the variance propagation adds a random effect covariate named "XX"
+# which we can safely give the value 0 now the variance has been propagated.
 pred$XX <- matrix(0, nrow=nrow(pred), ncol=3)
 
 # nofactor model
@@ -221,18 +265,18 @@ pred_nofactor_plots <- st_sf(pred_sf, pred_nofactor[,c("model","subset","Nhat")]
 # factor model
 pred_factor <- rbind(pred, pred)
 pred_factor$FlySwim <- factor(rep(c("fly", "swim"), c(nrow(pred), nrow(pred))),
-                              c("swim","fly"))
+                              c("swim", "fly"))
 pred_factor$Nhat <- predict(vp_factor$refit, newdata=pred_factor,
                             off.set=pred_factor$area)
 pred_factor$model <- "Factor"
 pred_factor$subset <- as.character(pred_factor$FlySwim)
 
 # bind on the spatial data
-pred_factor_plots <- st_sf(pred_sf, pred_factor[,c("model", "subset", "Nhat")])
+pred_factor_plots <- st_sf(pred_sf, pred_factor[, c("model", "subset", "Nhat")])
 
 
 # prepare the combined/difference columns
-pred_factor_plots2 <- rbind(pred_factor_plots, pred_factor_plots)
+pred_factor_plots2 <- pred_factor_plots
 pred_factor_plots2$subset <- rep(c("Combined", "Difference"),
                                  c(nrow(pred), nrow(pred)))
 # combined estimate
@@ -251,7 +295,7 @@ pred_factor_plots <- rbind(pred_factor_plots, pred_factor_plots2)
 # factor-smooth model
 pred_fs <- pred_factor
 pred_fs$Nhat <- predict(vp_fs$refit, newdata=pred_fs,
-                            off.set=pred_factor$area)
+                        off.set=pred_factor$area)
 pred_fs$model <- "Factor-smooth"
 pred_fs$subset <- as.character(pred_fs$FlySwim)
 
@@ -259,7 +303,7 @@ pred_fs$subset <- as.character(pred_fs$FlySwim)
 pred_fs_plots <- st_sf(pred_sf, pred_fs[,c("model", "subset", "Nhat")])
 
 # prepare the combined/difference columns
-pred_fs_plots2 <- rbind(pred_fs_plots, pred_fs_plots)
+pred_fs_plots2 <- pred_fs_plots
 pred_fs_plots2$subset <- rep(c("Combined", "Difference"),
                              c(nrow(pred), nrow(pred)))
 
@@ -277,13 +321,14 @@ pred_fs_plots <- rbind(pred_fs_plots, pred_fs_plots2)
 ```
 
 
-Once we've put all this together, we calculate a density for plotting (by dividing by grid cell area
+Once we've put all this together, we calculate a density for plotting by dividing by grid cell area
 
 ```{r concat-density}
 # concatenate everything
 all_Nhats <- rbind(pred_nofactor_plots, pred_factor_plots, pred_fs_plots)
 # convert abundance to density
-all_Nhats$Density <- all_Nhats$Nhat/10^2
+# note that st_area will give the area in metres and we want density per km^2
+all_Nhats$Density <- all_Nhats$Nhat/(as.numeric(st_area(all_Nhats)) / 1000^2)
 
 # reorder rows to give preferred plotting order
 all_Nhats$model <- factor(all_Nhats$model,
@@ -332,7 +377,7 @@ lp_factor <- predict(vp_factor$refit, newdata=pred_factor, type="lpmatrix")
 lp_fs <- predict(vp_fs$refit, newdata=pred_factor, type="lpmatrix")
 ```
 
-We can then generate parameter samples using the Metropolis-Hasting sampler in `mgcv`. We need to use tools from [this github repo](https://github.com/dill/GAMsampling) to ensure that the sampling works for the variance-propagated DSM.
+We can then generate parameter samples using the Metropolis-Hasting sampler in `mgcv`. We need to use tools from [`https://github.com/dill/GAMsampling`](https://github.com/dill/GAMsampling) to ensure that the sampling works for the variance-propagated DSM.
 
 ```{r mh-sampler}
 # load additional code
@@ -355,8 +400,7 @@ factor_Ngrid <- pred_factor$area * exp(lp_factor %*% t(samples_factor$bs))
 fs_Ngrid <- pred_factor$area * exp(lp_fs %*% t(samples_fs$bs))
 ```
 
-
-Once we have the per grid cell, per sample results we can build the data for plotting. This involves taking the empirical variance of these predictions over the samples.
+Once we have the estimates for each grid cell for each sample, we can build the data for plotting. This involves taking the empirical variance of these predictions over the samples.
 
 ```{r var-plotting}
 all_Nhats$var <- NA
@@ -367,13 +411,14 @@ all_Nhats$var[all_Nhats$model == "No factor" &
 # of the factor and the second 10000 for the second level, we need a variance
 # for each of those subsets
 all_Nhats$var[all_Nhats$model == "Factor" &
-              all_Nhats$subset == "fly"] <- apply(factor_Ngrid[1:10000,], 1, var)
+              all_Nhats$subset == "fly"] <- apply(factor_Ngrid[1:10000,],
+                                                  1, var)
 all_Nhats$var[all_Nhats$model == "Factor" &
               all_Nhats$subset == "swim"] <- apply(factor_Ngrid[10001:20000,],
                                                    1, var)
 all_Nhats$var[all_Nhats$model == "Factor" &
-              all_Nhats$subset == "Combined"] <-  apply((factor_Ngrid[1:10000,] +
-                               factor_Ngrid[10001:20000,])/2, 1, var)
+              all_Nhats$subset == "Combined"] <-  apply(factor_Ngrid[1:10000,] +
+                               factor_Ngrid[10001:20000,], 1, var)
 all_Nhats$var[all_Nhats$model == "Factor" &
               all_Nhats$subset == "Difference"] <-
   sqrt(all_Nhats$var[all_Nhats$model == "Factor" &
@@ -383,7 +428,8 @@ all_Nhats$var[all_Nhats$model == "Factor" &
 
 # same with the factor-smooth model
 all_Nhats$var[all_Nhats$model == "Factor-smooth" &
-              all_Nhats$subset == "fly"] <- apply(factor_Ngrid[1:10000,], 1, var)
+              all_Nhats$subset == "fly"] <- apply(factor_Ngrid[1:10000,],
+                                                  1, var)
 all_Nhats$var[all_Nhats$model == "Factor-smooth" &
               all_Nhats$subset == "swim"] <- apply(factor_Ngrid[10001:20000,],
                                                    1, var)
@@ -411,8 +457,6 @@ combined_CV_data <- subset(all_Nhats, subset=="Combined")
 
 combined_CV_plot <- ggplot() +
   geom_sf(data=combined_CV_data, aes(fill=CV_d, colour=CV_d)) +
-  #geom_point(data=segs_plot, alpha=0.2, shape=3, colour="grey60")+
-  #facet_grid(model~subset, drop=TRUE) +
   facet_wrap(~model, drop=TRUE, nrow=1) +
   labs(x="", y="", fill="CV", colour="CV") +
   theme_minimal() +
@@ -424,6 +468,7 @@ combined_CV_plot
 
 ```{r save-combined-plot}
 # write out the plot for the paper
+# (here using patchwork to put the plots ontop of each other)
 ggsave(combined_plot / combined_CV_plot, file="figures/fulmar_combined.pdf",
        width=13, height=9)
 ```
@@ -452,6 +497,7 @@ uncombined_CV_plot
 
 ```{r save-uncombined-plot}
 # write out the plot for the paper
+# (again using patchwork to put the plots ontop of each other)
 ggsave(uncombined_plot / uncombined_CV_plot, file="figures/fulmar_uncombined.pdf",
        width=13, height=7.5)
 ```
