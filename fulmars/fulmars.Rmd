@@ -243,7 +243,11 @@ So by AIC we prefer the factor-smooth model.
 
 # Prediction
 
-Now we can make predictions for each of these models. This code is a little complex as it involved binding the predictions onto `pred_sf` which is a spatial object with projection information. We create a `data.frame` that includes flying and swimming abundances combined and individually for the factor and factor-smooth models.
+Now we can make predictions for each of these models. This code is a little complex as it involved binding the predictions onto `pred_sf` which is a spatial object with projection information. We create a `data.frame` that includes predictions flying and swimming abundances per cell. We end up with:
+
+- Combined predictions (flying+swimming)
+- Individual behaviour predictions for the factor and factor-smooth models
+- Differences between behaviour predictions for the factor and factor-smooth models
 
 ```{r generate-plot-data}
 # create an extra column to account for the variance propagation model
@@ -251,26 +255,31 @@ Now we can make predictions for each of these models. This code is a little comp
 # which we can safely give the value 0 now the variance has been propagated.
 pred$XX <- matrix(0, nrow=nrow(pred), ncol=3)
 
+# create prediction data, with fly/swim column
+pred2 <- rbind(pred, pred)
+pred2$FlySwim <- factor(rep(c("fly", "swim"), c(nrow(pred), nrow(pred))),
+                        c("swim", "fly"))
+
 # nofactor model
-pred_nofactor <- pred
-# note that here we need to multiply by 2 to ensure that the results are
-# coherent with the other models. We split the segments into the two behaviours
-# above, so we need to duplicate here. Note that the proportion is based on
-# the segments, (we duplicated the segments so this is easy) and for more
-# complex survey schemes this would be a weighted sum
-pred_nofactor$Nhat <- 2*predict(vp_nofactor$refit, newdata=pred_nofactor,
+pred_nofactor <- pred2
+pred_nofactor$Nhat <- predict(vp_nofactor$refit, newdata=pred_nofactor,
                               off.set=pred_nofactor$area)
-pred_nofactor$model <- "No factor"
+pred_nofactor$Nhat <- pred_nofactor$Nhat[pred_nofactor$FlySwim=="swim"] +
+                      pred_nofactor$Nhat[pred_nofactor$FlySwim=="fly"]
+# flying and swimming predictions are the same here (no factor) so only need
+# the first nrow(pred) rows
+pred_nofactor <- pred_nofactor[1:nrow(pred), ]
+# name this subset and model
 pred_nofactor$subset <- "Combined"
+pred_nofactor$model <- "No factor"
 
 # bind on the spatial data
-pred_nofactor_plots <- st_sf(pred_sf, pred_nofactor[,c("model","subset","Nhat")])
+pred_nofactor_plots <- st_sf(pred_sf,
+                             pred_nofactor[, c("model", "subset", "Nhat")])
 
 
 # factor model
-pred_factor <- rbind(pred, pred)
-pred_factor$FlySwim <- factor(rep(c("fly", "swim"), c(nrow(pred), nrow(pred))),
-                              c("swim", "fly"))
+pred_factor <- pred2
 pred_factor$Nhat <- predict(vp_factor$refit, newdata=pred_factor,
                             off.set=pred_factor$area)
 pred_factor$model <- "Factor"
@@ -279,33 +288,33 @@ pred_factor$subset <- as.character(pred_factor$FlySwim)
 # bind on the spatial data
 pred_factor_plots <- st_sf(pred_sf, pred_factor[, c("model", "subset", "Nhat")])
 
-
 # prepare the combined/difference columns
 pred_factor_plots2 <- pred_factor_plots
 pred_factor_plots2$subset <- rep(c("Combined", "Difference"),
                                  c(nrow(pred), nrow(pred)))
 # combined estimate
 pred_factor_plots2$Nhat[pred_factor_plots2$subset=="Combined"] <-
-  pred_factor_plots$Nhat[1:nrow(pred)] +
-   pred_factor_plots$Nhat[(nrow(pred)+1):(2*nrow(pred))]
+  pred_factor_plots$Nhat[pred_factor_plots$subset=="swim"] +
+  pred_factor_plots$Nhat[pred_factor_plots$subset=="fly"]
 # difference in estimates
 pred_factor_plots2$Nhat[pred_factor_plots2$subset=="Difference"] <-
-  pred_factor_plots$Nhat[1:nrow(pred)] -
-   pred_factor_plots$Nhat[(nrow(pred)+1):(2*nrow(pred))]
+  pred_factor_plots$Nhat[pred_factor_plots$subset=="swim"] -
+  pred_factor_plots$Nhat[pred_factor_plots$subset=="fly"]
 
 # bind them together
 pred_factor_plots <- rbind(pred_factor_plots, pred_factor_plots2)
 
 
 # factor-smooth model
-pred_fs <- pred_factor
+pred_fs <- pred2
 pred_fs$Nhat <- predict(vp_fs$refit, newdata=pred_fs,
                         off.set=pred_factor$area)
 pred_fs$model <- "Factor-smooth"
 pred_fs$subset <- as.character(pred_fs$FlySwim)
 
 # bind on the spatial data
-pred_fs_plots <- st_sf(pred_sf, pred_fs[,c("model", "subset", "Nhat")])
+pred_fs_plots <- st_sf(pred_sf,
+                       pred_fs[, c("model", "subset", "Nhat")])
 
 # prepare the combined/difference columns
 pred_fs_plots2 <- pred_fs_plots
@@ -314,12 +323,12 @@ pred_fs_plots2$subset <- rep(c("Combined", "Difference"),
 
 # combined estimate
 pred_fs_plots2$Nhat[pred_fs_plots2$subset=="Combined"] <-
-  pred_fs_plots$Nhat[1:nrow(pred)] +
-   pred_fs_plots$Nhat[(nrow(pred)+1):(2*nrow(pred))]
+  pred_fs_plots$Nhat[pred_fs_plots$subset=="swim"] +
+  pred_fs_plots$Nhat[pred_fs_plots$subset=="fly"]
 # difference in estimates
 pred_fs_plots2$Nhat[pred_fs_plots2$subset=="Difference"] <-
-  pred_fs_plots$Nhat[1:nrow(pred)] -
-   pred_fs_plots$Nhat[(nrow(pred)+1):(2*nrow(pred))]
+  pred_fs_plots$Nhat[pred_fs_plots$subset=="swim"] -
+  pred_fs_plots$Nhat[pred_fs_plots$subset=="fly"]
 
 # bind them together
 pred_fs_plots <- rbind(pred_fs_plots, pred_fs_plots2)
@@ -417,14 +426,14 @@ all_Nhats$var[all_Nhats$model == "No factor" &
 # of the factor and the second 10000 for the second level, we need a variance
 # for each of those subsets
 all_Nhats$var[all_Nhats$model == "Factor" &
-              all_Nhats$subset == "fly"] <- apply(factor_Ngrid[1:10000,],
+              all_Nhats$subset == "fly"] <- apply(factor_Ngrid[1:10000, ],
                                                   1, var)
 all_Nhats$var[all_Nhats$model == "Factor" &
-              all_Nhats$subset == "swim"] <- apply(factor_Ngrid[10001:20000,],
+              all_Nhats$subset == "swim"] <- apply(factor_Ngrid[10001:20000, ],
                                                    1, var)
 all_Nhats$var[all_Nhats$model == "Factor" &
-              all_Nhats$subset == "Combined"] <-  apply(factor_Ngrid[1:10000,] +
-                               factor_Ngrid[10001:20000,], 1, var)
+              all_Nhats$subset == "Combined"] <-  apply(factor_Ngrid[1:10000, ] +
+                               factor_Ngrid[10001:20000, ], 1, var)
 all_Nhats$var[all_Nhats$model == "Factor" &
               all_Nhats$subset == "Difference"] <-
   sqrt(all_Nhats$var[all_Nhats$model == "Factor" &
@@ -434,13 +443,13 @@ all_Nhats$var[all_Nhats$model == "Factor" &
 
 # same with the factor-smooth model
 all_Nhats$var[all_Nhats$model == "Factor-smooth" &
-              all_Nhats$subset == "fly"] <- apply(factor_Ngrid[1:10000,],
+              all_Nhats$subset == "fly"] <- apply(factor_Ngrid[1:10000, ],
                                                   1, var)
 all_Nhats$var[all_Nhats$model == "Factor-smooth" &
-              all_Nhats$subset == "swim"] <- apply(factor_Ngrid[10001:20000,],
+              all_Nhats$subset == "swim"] <- apply(factor_Ngrid[10001:20000, ],
                                                    1, var)
 all_Nhats$var[all_Nhats$model == "Factor-smooth" &
-              all_Nhats$subset == "Combined"] <-  apply(factor_Ngrid[1:10000,] +
+              all_Nhats$subset == "Combined"] <-  apply(factor_Ngrid[1:10000, ] +
                                factor_Ngrid[10001:20000,], 1, var)
 all_Nhats$var[all_Nhats$model == "Factor-smooth" &
               all_Nhats$subset == "Difference"] <-
